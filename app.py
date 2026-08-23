@@ -3,7 +3,7 @@ import re
 import math
 import sqlite3
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
 
 import requests
@@ -22,6 +22,7 @@ STOP = {
 
 
 def db():
+    os.makedirs(os.path.dirname(DB), exist_ok=True)
     conn = sqlite3.connect(DB)
     conn.row_factory = sqlite3.Row
     return conn
@@ -68,6 +69,38 @@ def init_db():
             videos INTEGER
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS radar_runs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at TEXT,
+            finished_at TEXT,
+            region TEXT,
+            category_limit INTEGER,
+            channels_limit INTEGER,
+            discovery_mode TEXT,
+            channels_scanned INTEGER DEFAULT 0,
+            niches_found INTEGER DEFAULT 0,
+            status TEXT DEFAULT 'running'
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS radar_run_channels(
+            run_id INTEGER,
+            channel_id TEXT,
+            position INTEGER,
+            channel_score REAL,
+            momentum REAL,
+            outliers REAL,
+            audience_efficiency REAL,
+            freshness REAL,
+            consistency REAL,
+            observed_growth_per_day REAL,
+            created_at TEXT,
+            PRIMARY KEY(run_id, channel_id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_channel_time ON channel_snapshots(channel_id, captured_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_radar_runs_time ON radar_runs(started_at)")
 
     existing = {r["name"] for r in conn.execute("PRAGMA table_info(channels)")}
     for name, sql_type in [("published_at", "TEXT"), ("category_hint", "TEXT")]:
@@ -163,7 +196,7 @@ def save_channel(channel):
     """, (
         channel["youtube_id"], channel["handle"], channel["title"], channel["thumbnail"],
         channel["subscribers"], channel["views"], channel["videos"], channel["uploads_playlist_id"],
-        channel["published_at"], channel["category_hint"], datetime.utcnow().isoformat()
+        channel["published_at"], channel["category_hint"], datetime.now(timezone.utc).isoformat()
     ))
     conn.commit()
     conn.close()
@@ -180,11 +213,65 @@ def snapshot_channel(channel):
         INSERT INTO channel_snapshots(channel_id, captured_at, subscribers, views, videos)
         VALUES (?, ?, ?, ?, ?)
     """, (
-        channel["youtube_id"], datetime.utcnow().isoformat(), channel["subscribers"], channel["views"], channel["videos"]
+        channel["youtube_id"], datetime.now(timezone.utc).isoformat(), channel["subscribers"], channel["views"], channel["videos"]
     ))
     conn.commit()
     conn.close()
     return dict(previous) if previous else None
+
+
+def snapshot_history(channel_id, limit=30):
+    conn = db()
+    rows = [dict(r) for r in conn.execute("""
+        SELECT captured_at, subscribers, views, videos
+        FROM channel_snapshots
+        WHERE channel_id=?
+        ORDER BY captured_at DESC LIMIT ?
+    """, (channel_id, limit))]
+    conn.close()
+    return rows
+
+
+def begin_radar_run(region, category_limit, channels_limit, discovery_mode):
+    conn = db()
+    cur = conn.execute("""
+        INSERT INTO radar_runs(started_at, region, category_limit, channels_limit, discovery_mode, status)
+        VALUES (?, ?, ?, ?, ?, 'running')
+    """, (datetime.now(timezone.utc).isoformat(), region, category_limit, channels_limit, discovery_mode))
+    run_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return run_id
+
+
+def finish_radar_run(run_id, scored, niches, status="completed"):
+    conn = db()
+    conn.execute("""
+        UPDATE radar_runs
+        SET finished_at=?, channels_scanned=?, niches_found=?, status=?
+        WHERE id=?
+    """, (datetime.now(timezone.utc).isoformat(), len(scored), len(niches), status, run_id))
+    for position, channel in enumerate(scored, start=1):
+        comp = channel["components"]
+        conn.execute("""
+            INSERT OR REPLACE INTO radar_run_channels(
+                run_id, channel_id, position, channel_score, momentum, outliers,
+                audience_efficiency, freshness, consistency, observed_growth_per_day, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            run_id, channel["youtube_id"], position, channel["channel_score"], comp["momentum"],
+            comp["outliers"], comp["audience_efficiency"], comp["freshness"], comp["consistency"],
+            channel["observed_views_growth_per_day"], datetime.now(timezone.utc).isoformat()
+        ))
+    conn.commit()
+    conn.close()
+
+
+def fail_radar_run(run_id):
+    conn = db()
+    conn.execute("UPDATE radar_runs SET finished_at=?, status='failed' WHERE id=?", (datetime.now(timezone.utc).isoformat(), run_id))
+    conn.commit()
+    conn.close()
 
 
 def parse_duration(value):
@@ -199,12 +286,13 @@ def iso_dt(value):
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except ValueError:
         return None
 
 
-def playlist_video_ids(playlist_id, max_results=20):
+def playlist_video_ids(playlist_id, max_results=30):
     if not playlist_id:
         return []
     data = yt("playlistItems", {
@@ -220,12 +308,9 @@ def save_video_details(channel_id, ids):
         return 0
     count = 0
     conn = db()
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     for batch in batched(ids, 50):
-        data = yt("videos", {
-            "part": "snippet,statistics,contentDetails",
-            "id": ",".join(batch)
-        })
+        data = yt("videos", {"part": "snippet,statistics,contentDetails", "id": ",".join(batch)})
         for item in data.get("items", []):
             snippet = item["snippet"]
             stats = item.get("statistics", {})
@@ -261,7 +346,7 @@ def median(values):
     values = sorted(values)
     n = len(values)
     if not n:
-        return 1
+        return 0
     mid = n // 2
     return values[mid] if n % 2 else (values[mid - 1] + values[mid]) / 2
 
@@ -279,10 +364,9 @@ def video_analysis(channel_id):
         age_days = max((now - published).total_seconds() / 86400, 0.25) if published else 1
         video["age_days"] = round(age_days, 1)
         video["views_per_day"] = round(video["views"] / age_days, 1)
-    base = median([v["views_per_day"] for v in rows if v["views_per_day"] > 0])
+    base = median([v["views_per_day"] for v in rows if v["views_per_day"] > 0]) or 1
     for video in rows:
         video["outlier_score"] = round(video["views_per_day"] / max(base, 1), 2)
-    rows.sort(key=lambda x: x["views_per_day"], reverse=True)
     return rows, base
 
 
@@ -297,46 +381,65 @@ def clamp(value):
     return round(max(0, min(100, value)), 1)
 
 
-def channel_opportunity(channel, previous=None):
+def observed_growth(channel, previous):
+    if not previous:
+        return None
+    previous_at = iso_dt(previous["captured_at"])
+    if not previous_at:
+        return None
+    days = max((datetime.now(timezone.utc) - previous_at).total_seconds() / 86400, 0.01)
+    if days < 0.02:
+        return None
+    return round(max(0, channel["views"] - previous["views"]) / days, 1)
+
+
+def growth_score_v2(channel, previous=None):
     videos, base_vpd = video_analysis(channel["youtube_id"])
     recent = [v for v in videos if v["age_days"] <= 30]
-    outliers = [v for v in videos if v["outlier_score"] >= 2]
-    views_sub = channel["views"] / max(channel["subscribers"], 1)
-    age_months = months_old(channel.get("published_at", ""))
+    previous_window = [v for v in videos if 30 < v["age_days"] <= 90]
+    strong = [v for v in videos if v["outlier_score"] >= 2]
+    signal = [v for v in recent if v["outlier_score"] >= 1.2]
 
-    velocity_score = clamp(math.log10(max(base_vpd, 1)) * 22)
-    views_sub_score = clamp(math.sqrt(max(views_sub, 0)) * 10)
-    outlier_score = clamp((len(outliers) / max(len(videos), 1)) * 300)
-    freshness_score = 100 if age_months <= 6 else 85 if age_months <= 12 else 65 if age_months <= 24 else 40 if age_months <= 48 else 20
-    activity_score = clamp((len(recent) / 8) * 100)
+    recent_vpd = median([v["views_per_day"] for v in recent]) or base_vpd
+    older_vpd = median([v["views_per_day"] for v in previous_window])
+    momentum_ratio = recent_vpd / max(older_vpd, 1) if older_vpd else 1
+    momentum_proxy = clamp(35 + math.log10(max(recent_vpd, 1)) * 12 + max(0, math.log2(max(momentum_ratio, 0.25))) * 18)
 
-    observed_growth = None
-    growth_score = None
-    if previous:
-        previous_at = iso_dt(previous["captured_at"])
-        if previous_at:
-            days = max((datetime.now(timezone.utc) - previous_at).total_seconds() / 86400, 0.01)
-            delta_views = max(0, channel["views"] - previous["views"])
-            observed_growth = round(delta_views / days, 1)
-            growth_score = clamp(math.log10(max(observed_growth, 1)) * 22)
+    growth_per_day = observed_growth(channel, previous)
+    if growth_per_day is not None:
+        observed_component = clamp(math.log10(max(growth_per_day, 1)) * 24)
+        momentum = clamp(momentum_proxy * 0.55 + observed_component * 0.45)
+    else:
+        momentum = momentum_proxy
 
-    weights = {
-        "velocity": 0.30,
-        "views_sub": 0.20,
-        "outliers": 0.20,
-        "freshness": 0.15,
-        "activity": 0.15,
-    }
-    score = (
-        velocity_score * weights["velocity"] +
-        views_sub_score * weights["views_sub"] +
-        outlier_score * weights["outliers"] +
-        freshness_score * weights["freshness"] +
-        activity_score * weights["activity"]
+    density = len(strong) / max(len(videos), 1)
+    avg_strength = (sum(min(v["outlier_score"], 8) for v in strong) / len(strong)) if strong else 0
+    outliers = clamp(density * 180 + avg_strength * 10)
+
+    recent_views = sum(v["views"] for v in recent)
+    recent_views_per_sub = recent_views / max(channel["subscribers"], 1)
+    audience_efficiency = clamp(math.log10(1 + recent_views_per_sub) * 55)
+
+    newest_signal_age = min((v["age_days"] for v in strong), default=999)
+    signal_freshness = 100 if newest_signal_age <= 7 else 85 if newest_signal_age <= 30 else 65 if newest_signal_age <= 60 else 40
+    channel_age = months_old(channel.get("published_at", ""))
+    channel_freshness = 100 if channel_age <= 6 else 85 if channel_age <= 12 else 65 if channel_age <= 24 else 40 if channel_age <= 48 else 20
+    freshness = clamp(signal_freshness * 0.7 + channel_freshness * 0.3)
+
+    signal_ratio = len(signal) / max(len(recent), 1)
+    repeatability = min(1, len(strong) / 3)
+    upload_factor = min(1, len(recent) / 8)
+    consistency = clamp(signal_ratio * 55 + repeatability * 30 + upload_factor * 15)
+
+    score = clamp(
+        momentum * 0.30 +
+        outliers * 0.25 +
+        audience_efficiency * 0.20 +
+        freshness * 0.15 +
+        consistency * 0.10
     )
-    if growth_score is not None:
-        score = score * 0.8 + growth_score * 0.2
 
+    top_videos = sorted(videos, key=lambda x: (x["outlier_score"], x["views_per_day"]), reverse=True)[:5]
     return {
         "youtube_id": channel["youtube_id"],
         "title": channel["title"],
@@ -345,23 +448,23 @@ def channel_opportunity(channel, previous=None):
         "subscribers": channel["subscribers"],
         "views": channel["views"],
         "video_count": channel["videos"],
-        "age_months": round(age_months, 1),
+        "age_months": round(channel_age, 1),
         "category_hint": channel.get("category_hint", ""),
         "median_views_per_day": round(base_vpd, 1),
-        "views_per_subscriber": round(views_sub, 1),
+        "recent_views_per_subscriber": round(recent_views_per_sub, 2),
         "uploads_30d": len(recent),
-        "outliers_2x": len(outliers),
-        "observed_views_growth_per_day": observed_growth,
-        "channel_score": round(score, 1),
+        "outliers_2x": len(strong),
+        "observed_views_growth_per_day": growth_per_day,
+        "channel_score": score,
+        "score_version": 2,
         "components": {
-            "velocity": velocity_score,
-            "views_sub": views_sub_score,
-            "outliers": outlier_score,
-            "freshness": freshness_score,
-            "activity": activity_score,
-            "observed_growth": growth_score,
+            "momentum": momentum,
+            "outliers": outliers,
+            "audience_efficiency": audience_efficiency,
+            "freshness": freshness,
+            "consistency": consistency,
         },
-        "top_videos": videos[:5],
+        "top_videos": top_videos,
     }
 
 
@@ -404,9 +507,9 @@ def cluster_signal_videos(channels):
     results = []
     for cluster in clusters:
         videos = cluster["videos"]
-        channel_ids = {v["channel_id"] for v in videos}
         if not videos:
             continue
+        channel_ids = {v["channel_id"] for v in videos}
         weighted = defaultdict(float)
         for video in videos:
             for token in tokens(video["title"]):
@@ -441,7 +544,7 @@ def cluster_signal_videos(channels):
     return results[:12]
 
 
-def discover_candidates(region="US", category_limit=8, channels_limit=20):
+def discover_channel_hints(region="US", category_limit=8, channels_limit=20, discovery_mode="balanced"):
     categories_data = yt("videoCategories", {"part": "snippet", "regionCode": region})
     categories = [
         (item["id"], item["snippet"]["title"])
@@ -450,51 +553,83 @@ def discover_candidates(region="US", category_limit=8, channels_limit=20):
     ][:category_limit]
 
     channel_hints = {}
+    per_source_limit = max(4, math.ceil(channels_limit / max(len(categories), 1)))
+    published_after = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat().replace("+00:00", "Z")
+
     for category_id, category_name in categories:
         popular = yt("videos", {
             "part": "snippet",
             "chart": "mostPopular",
             "regionCode": region,
             "videoCategoryId": category_id,
-            "maxResults": 8,
+            "maxResults": min(8, per_source_limit + 2),
         })
         for item in popular.get("items", []):
-            channel_id = item.get("snippet", {}).get("channelId")
-            if channel_id and channel_id not in channel_hints:
-                channel_hints[channel_id] = category_name
-            if len(channel_hints) >= channels_limit:
-                break
-        if len(channel_hints) >= channels_limit:
+            cid = item.get("snippet", {}).get("channelId")
+            if cid:
+                channel_hints.setdefault(cid, category_name)
+
+        if discovery_mode in {"balanced", "deep"}:
+            recent = yt("search", {
+                "part": "snippet",
+                "type": "video",
+                "order": "viewCount",
+                "regionCode": region,
+                "videoCategoryId": category_id,
+                "publishedAfter": published_after,
+                "maxResults": min(8, per_source_limit + 2),
+            })
+            for item in recent.get("items", []):
+                cid = item.get("snippet", {}).get("channelId")
+                if cid:
+                    channel_hints.setdefault(cid, category_name)
+
+        if len(channel_hints) >= channels_limit * 2:
             break
 
-    ids = list(channel_hints.keys())[:channels_limit]
-    items = []
-    for batch in batched(ids, 50):
-        data = yt("channels", {
-            "part": "snippet,statistics,contentDetails",
-            "id": ",".join(batch)
-        })
-        items.extend(data.get("items", []))
+    return dict(list(channel_hints.items())[:channels_limit * 2])
 
-    scored = []
-    for item in items:
-        cid = item["id"]
-        channel = normalize_channel(item, channel_hints.get(cid, ""))
-        previous = snapshot_channel(channel)
-        save_channel(channel)
-        video_ids = playlist_video_ids(channel["uploads_playlist_id"], max_results=20)
-        save_video_details(cid, video_ids)
-        scored.append(channel_opportunity(channel, previous))
 
-    scored.sort(key=lambda x: x["channel_score"], reverse=True)
-    niches = cluster_signal_videos(scored)
-    return {
-        "region": region,
-        "channels_scanned": len(scored),
-        "channels": scored,
-        "niches": niches,
-        "note": "El primer escaneo usa señales actuales. Los escaneos posteriores también incorporan crecimiento observado entre snapshots.",
-    }
+def discover_candidates(region="US", category_limit=8, channels_limit=20, discovery_mode="balanced"):
+    run_id = begin_radar_run(region, category_limit, channels_limit, discovery_mode)
+    try:
+        channel_hints = discover_channel_hints(region, category_limit, channels_limit, discovery_mode)
+        ids = list(channel_hints.keys())
+        items = []
+        for batch in batched(ids, 50):
+            data = yt("channels", {"part": "snippet,statistics,contentDetails", "id": ",".join(batch)})
+            items.extend(data.get("items", []))
+
+        candidate_channels = []
+        for item in items:
+            channel = normalize_channel(item, channel_hints.get(item["id"], ""))
+            candidate_channels.append(channel)
+        candidate_channels.sort(key=lambda c: (c["subscribers"] > 500000, c["subscribers"]))
+        candidate_channels = candidate_channels[:channels_limit]
+
+        scored = []
+        for channel in candidate_channels:
+            previous = snapshot_channel(channel)
+            save_channel(channel)
+            video_ids = playlist_video_ids(channel["uploads_playlist_id"], max_results=30)
+            save_video_details(channel["youtube_id"], video_ids)
+            scored.append(growth_score_v2(channel, previous))
+
+        scored.sort(key=lambda x: x["channel_score"], reverse=True)
+        niches = cluster_signal_videos(scored)
+        finish_radar_run(run_id, scored, niches)
+        return {
+            "run_id": run_id,
+            "region": region,
+            "discovery_mode": discovery_mode,
+            "channels_scanned": len(scored),
+            "channels": scored,
+            "niches": niches,
+            "note": "Growth Opportunity Score v2: Momentum, Outliers, Audience Efficiency, Freshness y Consistency. Cada ejecución queda guardada para medir crecimiento real entre escaneos.",
+        }
+    except Exception:
+        fail_radar_run(run_id)
+        raise
 
 
 @app.route("/")
@@ -504,7 +639,7 @@ def home():
 
 @app.get("/api/status")
 def status():
-    return jsonify({"mvp": "global-discovery", "youtube_api_configured": bool(KEY)})
+    return jsonify({"mvp": "global-discovery", "score_version": 2, "youtube_api_configured": bool(KEY)})
 
 
 @app.post("/api/discovery/run")
@@ -513,15 +648,49 @@ def run_discovery():
     region = str(body.get("region", "US")).upper()[:2]
     category_limit = max(1, min(int(body.get("category_limit", 8)), 15))
     channels_limit = max(5, min(int(body.get("channels_limit", 20)), 30))
+    discovery_mode = str(body.get("discovery_mode", "balanced"))
+    if discovery_mode not in {"light", "balanced", "deep"}:
+        discovery_mode = "balanced"
     if not KEY:
         return jsonify({"error": "Configura YOUTUBE_API_KEY para ejecutar el radar global."}), 503
     try:
-        return jsonify(discover_candidates(region, category_limit, channels_limit))
+        return jsonify(discover_candidates(region, category_limit, channels_limit, discovery_mode))
     except requests.HTTPError as exc:
         code = exc.response.status_code if exc.response is not None else 502
         return jsonify({"error": f"YouTube API respondió con error {code}."}), 502
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
+
+
+@app.get("/api/discovery/history")
+def discovery_history():
+    limit = max(1, min(int(request.args.get("limit", 20)), 100))
+    conn = db()
+    rows = [dict(r) for r in conn.execute("SELECT * FROM radar_runs ORDER BY started_at DESC LIMIT ?", (limit,))]
+    conn.close()
+    return jsonify(rows)
+
+
+@app.get("/api/discovery/history/<int:run_id>")
+def discovery_run_detail(run_id):
+    conn = db()
+    run = conn.execute("SELECT * FROM radar_runs WHERE id=?", (run_id,)).fetchone()
+    if not run:
+        conn.close()
+        return jsonify({"error": "Ejecución no encontrada"}), 404
+    channels = [dict(r) for r in conn.execute("""
+        SELECT r.*, c.title, c.handle, c.thumbnail, c.subscribers
+        FROM radar_run_channels r
+        LEFT JOIN channels c ON c.youtube_id=r.channel_id
+        WHERE r.run_id=? ORDER BY r.position ASC
+    """, (run_id,))]
+    conn.close()
+    return jsonify({"run": dict(run), "channels": channels})
+
+
+@app.get("/api/channels/<channel_id>/history")
+def channel_history(channel_id):
+    return jsonify(snapshot_history(channel_id, limit=60))
 
 
 @app.get("/api/channels")
@@ -547,12 +716,13 @@ def add_channel():
         channel = normalize_channel(item)
         previous = snapshot_channel(channel)
         save_channel(channel)
-        save_video_details(channel["youtube_id"], playlist_video_ids(channel["uploads_playlist_id"], 20))
-        return jsonify(channel_opportunity(channel, previous))
+        save_video_details(channel["youtube_id"], playlist_video_ids(channel["uploads_playlist_id"], 30))
+        return jsonify(growth_score_v2(channel, previous))
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
 
+init_db()
+
 if __name__ == "__main__":
-    init_db()
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8000")), debug=True)
