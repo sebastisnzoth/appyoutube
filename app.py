@@ -6,7 +6,7 @@ import requests
 from flask import Flask, jsonify, request, send_from_directory
 
 ROOT=os.path.dirname(os.path.abspath(__file__))
-DB=os.path.join(ROOT,"data","nicheradar.db")
+DB="/tmp/nicheradar.db"
 KEY=os.getenv("YOUTUBE_API_KEY","").strip()
 app=Flask(__name__,static_folder="static",static_url_path="/static")
 STOP={"de","la","el","los","las","un","una","y","o","en","para","por","con","sin","que","como","cómo","del","al","es","son","the","a","an","and","or","in","on","for","to","of","with","is","are","how","why","what","your","you","from","más","menos"}
