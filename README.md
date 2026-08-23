@@ -1,6 +1,6 @@
 # NicheRadar — MVP Global Discovery
 
-NicheRadar descubre automáticamente canales con señales de aceleración y detecta nichos y micro-nichos emergentes con evidencia visible.
+NicheRadar descubre automáticamente canales con señales de aceleración, detecta micro-nichos emergentes y ahora permite conectar el canal propio mediante Google OAuth para publicar videos directamente en YouTube.
 
 ## Estado actual
 
@@ -10,88 +10,89 @@ La versión actual implementa:
 2. `Growth Opportunity Score v2`;
 3. historial persistente del radar;
 4. `Opportunity Timeline` 24h / 7d / 30d;
-5. `Confidence Score v1` para canales y micro-nichos.
+5. `Confidence Score v1` para canales y micro-nichos;
+6. Google OAuth + My Channel + publicación directa a YouTube.
 
-## Growth Opportunity Score v2
+## Scores del radar
 
-- 30% Momentum
-- 25% Outliers
-- 20% Audience Efficiency
-- 15% Freshness
-- 10% Consistency
+`Growth Opportunity Score` mide potencial. `Confidence Score` mide qué tan sólida es la evidencia. El Timeline usa snapshots reales y nunca inventa una ventana histórica si todavía no existe cobertura suficiente.
 
-Este score mide **potencial**.
+## Google OAuth + My Channel
 
-## Confidence Score v1
+El flujo OAuth usa una aplicación web de Google y solicita únicamente estos scopes de YouTube:
 
-Confidence mide **qué tan sólida es la evidencia detrás del score**, no el potencial.
-
-### Canal
-
-El Confidence Score de canal usa cuatro factores:
-
-- tamaño de la muestra de videos;
-- repetición de outliers;
-- profundidad del historial de snapshots;
-- cobertura disponible de Timeline 24h / 7d / 30d.
-
-La salida incluye:
-
-```json
-{
-  "confidence": {
-    "score": 78.4,
-    "label": "Alta",
-    "factors": {
-      "video_sample": 100,
-      "outlier_repeatability": 75,
-      "snapshot_depth": 62.5,
-      "timeline_coverage": 66.7
-    }
-  }
-}
+```text
+https://www.googleapis.com/auth/youtube.readonly
+https://www.googleapis.com/auth/youtube.upload
 ```
 
-### Micro-nicho
+El primero permite leer el canal autorizado. El segundo permite gestionar/subir videos. Para una aplicación pública, Google puede exigir verificación OAuth antes de eliminar la pantalla de aplicación no verificada.
 
-El Confidence Score de oportunidad usa:
+Las credenciales OAuth se guardan cifradas en SQLite usando Fernet. La clave de cifrado **nunca** debe subirse al repositorio.
 
-- cantidad de canales independientes;
-- cantidad de videos señal;
-- fuerza media de los outliers;
-- frescura de las señales.
+### Variables requeridas
 
-Esto evita tratar igual una oportunidad basada en dos videos que otra validada por muchos canales y múltiples señales.
+```bash
+YOUTUBE_API_KEY=...
+GOOGLE_OAUTH_CLIENT_ID=...
+GOOGLE_OAUTH_CLIENT_SECRET=...
+GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/auth/youtube/callback
+FLASK_SECRET_KEY=...
+TOKEN_ENCRYPTION_KEY=...
+```
 
-Etiquetas:
+Generar una clave Fernet:
 
-- `Alta`: 75–100
-- `Media`: 50–74.9
-- `Baja`: 0–49.9
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
 
-## Opportunity Timeline
+En Google Cloud Console registra exactamente el mismo redirect URI que uses en `GOOGLE_OAUTH_REDIRECT_URI`.
 
-Cada canal puede incluir ventanas observadas:
+## Publicación a YouTube
 
-- 24h
-- 7d
-- 30d
+La UI de `Mi canal` permite:
 
-Si no existe suficiente historial, la API devuelve `available: false` y no inventa datos.
+- conectar/desconectar un canal;
+- refrescar métricas públicas del canal autenticado;
+- seleccionar título;
+- descripción;
+- tags;
+- categoría;
+- privacidad `private`, `unlisted` o `public`;
+- archivo de video;
+- miniatura opcional;
+- subir mediante `videos.insert` y `thumbnails.set`.
 
-## Endpoints principales
+El valor predeterminado de privacidad es **private** para evitar publicaciones accidentales.
+
+Las subidas quedan registradas localmente en `published_videos`.
+
+## Endpoints OAuth y publicación
+
+```text
+GET  /auth/youtube/start
+GET  /auth/youtube/callback
+GET  /api/me/youtube
+GET  /api/me/youtube/refresh
+POST /api/me/youtube/disconnect
+POST /api/publish/youtube
+GET  /api/publish/history
+```
+
+El endpoint `POST /api/publish/youtube` recibe `multipart/form-data`.
+
+## Endpoints del radar
 
 ```text
 POST /api/discovery/run
-GET /api/discovery/history
-GET /api/discovery/history/<run_id>
-GET /api/channels/<channel_id>/history
-GET /api/channels/<channel_id>/timeline
+GET  /api/discovery/history
+GET  /api/discovery/history/<run_id>
+GET  /api/channels/<channel_id>/history
+GET  /api/channels/<channel_id>/timeline
 POST /api/channels
-GET /api/channels
+GET  /api/channels
 ```
-
-Las ejecuciones guardan también `confidence_score` y `confidence_label` por canal en `radar_run_channels`.
 
 ## Ejecutar
 
@@ -100,7 +101,12 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 export YOUTUBE_API_KEY="TU_KEY"
-python app.py
+export GOOGLE_OAUTH_CLIENT_ID="..."
+export GOOGLE_OAUTH_CLIENT_SECRET="..."
+export GOOGLE_OAUTH_REDIRECT_URI="http://localhost:8000/auth/youtube/callback"
+export FLASK_SECRET_KEY="..."
+export TOKEN_ENCRYPTION_KEY="..."
+python oauth_app.py
 ```
 
 Abrir:
@@ -109,11 +115,25 @@ Abrir:
 http://localhost:8000
 ```
 
+Para Gunicorn:
+
+```bash
+gunicorn oauth_app:app
+```
+
+## Seguridad y producción
+
+- El repositorio es público: nunca guardes API keys, OAuth client secrets, refresh tokens ni `TOKEN_ENCRYPTION_KEY` en Git.
+- Para producción usa HTTPS y una `FLASK_SECRET_KEY` larga y aleatoria.
+- El upload actual pasa por el servidor Flask. Es apropiado para el MVP; para archivos grandes y escala real conviene evolucionarlo a una arquitectura de uploads/resumable jobs que no mantenga una petición HTTP abierta durante toda la subida.
+- Los permisos OAuth deben pedirse con el menor alcance posible.
+
 ## Roadmap siguiente
 
-6. Google OAuth + My Channel + publicación a YouTube.
 7. Financial Dashboard con YouTube Analytics para canales autorizados.
+
+Ese paso añadirá scopes de Analytics únicamente cuando se implemente el módulo financiero, en lugar de pedirlos antes de que sean necesarios.
 
 ## Importante
 
-Los scores de NicheRadar son heurísticas experimentales. `Growth Opportunity Score` y `Confidence Score` deben mostrarse como cálculos del producto. Las métricas públicas observadas provienen de YouTube Data API; datos privados del propietario requerirán OAuth y APIs autorizadas de YouTube.
+Los scores de NicheRadar son heurísticas experimentales del producto. Las métricas públicas observadas provienen de YouTube Data API. Los datos privados del propietario solo deben mostrarse cuando provienen de una autorización OAuth válida.
