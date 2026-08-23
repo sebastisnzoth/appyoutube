@@ -14,4 +14,4 @@ dependencies = [
 ]
 
 [tool.vercel]
-entrypoint = "ai_patch:app"
+entrypoint = "config_patch:app"
