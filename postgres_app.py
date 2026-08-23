@@ -150,12 +150,11 @@ Devuelve SOLO JSON válido, sin markdown, con exactamente estas claves:
 
 No inventes estadísticas. Usa la evidencia solo como señal de demanda. Evita clickbait engañoso."""
 
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent"
     payload = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
-            "responseMimeType": "application/json",
-            "thinkingConfig": {"thinkingBudget": 0},
+            "responseMimeType": "application/json"
         },
     }
     try:
