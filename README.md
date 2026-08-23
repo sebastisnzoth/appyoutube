@@ -1,63 +1,82 @@
 # NicheRadar — MVP Global Discovery
 
-NicheRadar ya no parte de un nicho fijo ni de una lista manual de competidores. El núcleo del MVP es descubrir automáticamente canales que muestran señales de crecimiento acelerado y, a partir de esos canales, detectar nichos y micro-nichos emergentes.
+NicheRadar descubre automáticamente canales con señales de aceleración y, a partir de ellos, detecta nichos y micro-nichos emergentes.
 
-## Objetivo del MVP
+## Estado actual
 
-Responder estas preguntas:
+Esta rama implementa los primeros tres pasos del roadmap técnico:
 
-1. ¿Qué canales están despegando ahora?
-2. ¿Qué nicho o micro-nicho comparten?
-3. ¿Qué tan fuerte es la oportunidad?
-4. ¿Qué evidencia valida esa señal?
+1. motor de descubrimiento más amplio que `mostPopular`;
+2. `Growth Opportunity Score v2`;
+3. historial persistente de ejecuciones del radar.
 
-## Flujo principal
+## 1. Motor de descubrimiento
 
-1. Elegir una región.
-2. Ejecutar `Radar global`.
-3. NicheRadar recorre categorías de YouTube.
-4. Detecta canales candidatos desde videos populares actuales.
-5. Importa datos públicos de cada canal.
-6. Analiza videos recientes.
-7. Calcula views/día, views/sub, actividad, antigüedad y outliers.
-8. Calcula un `Channel Opportunity Score`.
-9. Agrupa videos señal en nichos/micro-nichos mediante similitud de títulos.
-10. Calcula un `Opportunity Score` por micro-nicho y muestra evidencia.
+El modo `balanced` combina dos fuentes públicas de YouTube Data API:
 
-## Channel Opportunity Score v1
+- `videos.list(chart=mostPopular)`;
+- `search.list` sobre videos publicados en los últimos 30 días, ordenados por views y filtrados por categoría/región.
 
-El score combina:
+Esto permite encontrar candidatos que todavía no dominan `mostPopular`, incluyendo canales pequeños y medianos con videos recientes ganando tracción.
 
-- 30% velocidad de views de los videos recientes
-- 20% views por suscriptor
-- 20% densidad de videos outlier
-- 15% frescura / antigüedad del canal
-- 15% actividad reciente
+Hay tres modos:
 
-Cuando ya existe un snapshot anterior del mismo canal, el sistema incorpora también crecimiento observado entre escaneos.
+- `light`: solo `mostPopular`, menor uso de cuota;
+- `balanced`: popular + búsqueda reciente, recomendado;
+- `deep`: reservado para ampliar búsqueda en iteraciones posteriores.
 
-## Detección de outliers
+> `search.list` consume bastante más cuota de YouTube API que `videos.list`, por eso el modo light sigue disponible.
 
-Para cada canal se analizan videos recientes y se calcula:
+## 2. Growth Opportunity Score v2
 
-`Outlier Score = views/día del video / mediana de views/día del canal`
+El score es de 0 a 100 y separa cinco componentes visibles:
 
-Los videos por encima de 1.5x se usan como señales para formar clusters temáticos. Los videos 2x+ cuentan como outliers fuertes del canal.
+- **30% Momentum**: velocidad reciente y, cuando existe histórico, crecimiento observado entre snapshots;
+- **25% Outliers**: densidad y fuerza de videos 2x+;
+- **20% Audience Efficiency**: views recientes en relación con suscriptores;
+- **15% Freshness**: recencia de las señales fuertes + antigüedad del canal;
+- **10% Consistency**: repetición de señales en varios videos y actividad reciente.
 
-## Opportunity Score de nicho v1
+El primer escaneo usa proxies actuales. Desde el segundo escaneo del mismo canal, Momentum puede incorporar crecimiento observado real entre snapshots.
 
-Los clusters temáticos reciben un score basado en:
+## 3. Historial del radar
 
-- demanda observada
-- validación entre varios canales
-- frescura de los videos señal
-- calidad media de los canales que validan el tema
+Cada ejecución crea un registro en:
 
-El clustering actual usa tokenización + similitud Jaccard. Es simple, auditable y suficiente para el MVP, pero después puede reemplazarse por embeddings semánticos.
+- `radar_runs`;
+- `radar_run_channels`;
+- `channel_snapshots`.
 
-## Limitación importante
+Esto prepara la base de datos para el siguiente paso: **Opportunity Timeline 24h / 7d / 30d**.
 
-El primer escaneo no puede medir crecimiento histórico real porque todavía no existe una medición anterior. Por eso usa proxies actuales: views/día, outliers, views/sub, actividad y antigüedad. Los siguientes escaneos guardan snapshots y permiten empezar a medir crecimiento observado entre fechas.
+Endpoints nuevos:
+
+```text
+GET /api/discovery/history
+GET /api/discovery/history/<run_id>
+GET /api/channels/<channel_id>/history
+```
+
+El endpoint principal sigue siendo:
+
+```text
+POST /api/discovery/run
+```
+
+Ejemplo de body:
+
+```json
+{
+  "region": "US",
+  "category_limit": 6,
+  "channels_limit": 20,
+  "discovery_mode": "balanced"
+}
+```
+
+## Micro-nichos
+
+Los videos señal se siguen agrupando con tokenización + similitud Jaccard. El clustering es intencionalmente simple y auditable para el MVP. Después puede reemplazarse por embeddings semánticos.
 
 ## Ejecutar
 
@@ -71,23 +90,19 @@ python app.py
 
 Abrir:
 
-`http://localhost:8000`
-
-## Variable de entorno
-
-No subas la API key al repositorio.
-
-```bash
-YOUTUBE_API_KEY=tu_clave_real
+```text
+http://localhost:8000
 ```
 
-## Próximos pasos
+Nunca subas la API key real al repositorio.
 
-- guardar ejecuciones del radar como historial
-- comparar crecimiento a 24h / 7d / 30d
-- usar embeddings para micro-nichos semánticos
-- ampliar el universo de descubrimiento más allá de `mostPopular`
-- filtros por idioma, país, edad y tamaño de canal
-- detección de canales nuevos con alta velocidad aunque todavía no sean populares
-- alertas cuando aparezca una oportunidad nueva
-- ideas de contenido derivadas de la evidencia
+## Roadmap técnico siguiente
+
+4. Opportunity Timeline con ventanas 24h / 7d / 30d.
+5. Confidence Score por canal y oportunidad.
+6. Google OAuth + My Channel + publicación a YouTube.
+7. Financial Dashboard con YouTube Analytics para canales autorizados.
+
+## Importante
+
+Los scores de NicheRadar son heurísticas experimentales del producto. Las métricas públicas de canales externos provienen de YouTube Data API; crecimiento, oportunidad y monetización potencial deben mostrarse como cálculos/estimaciones cuando no provienen directamente de datos privados autorizados del propietario del canal.
