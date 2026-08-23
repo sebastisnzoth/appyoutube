@@ -1,37 +1,68 @@
-<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>NicheRadar Fase 4</title>
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NicheRadar — MVP Global Discovery</title>
 <style>
-:root{--bg:#080c18;--p:#11182e;--p2:#17213d;--l:#273657;--t:#f5f7ff;--m:#98a5c6;--a:#7658ff;--g:#22d3a6}
-*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui;background:radial-gradient(circle at 90% 0,rgba(118,88,255,.22),transparent 30%),var(--bg);color:var(--t)}.w{max-width:1320px;margin:auto;padding:28px}
-.top{display:flex;justify-content:space-between;gap:20px}.logo{font-size:25px;font-weight:900}.logo i{font-style:normal;color:var(--g)}.status,.pill{background:var(--p2);padding:6px 9px;border-radius:999px;font-size:11px}
-h1{font-size:36px;margin:28px 0 6px}.sub,.note{color:var(--m);line-height:1.5}.card{background:var(--p);border:1px solid var(--l);border-radius:16px;padding:18px;margin:16px 0}.row{display:flex;gap:10px;flex-wrap:wrap}.row input{flex:1;min-width:240px;background:#0c1327;color:white;border:1px solid var(--l);border-radius:11px;padding:13px}
-button{border:0;border-radius:11px;padding:11px 15px;font-weight:800;background:var(--a);color:white;cursor:pointer}.green{background:var(--g);color:#05241c}.danger{background:#351b27;color:#ff9cab}
-.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.channel,.opp{background:#0f162c;border:1px solid var(--l);border-radius:15px;padding:15px}.head{display:flex;gap:10px;align-items:center}.head img{width:44px;height:44px;border-radius:50%;object-fit:cover}.head h3{margin:0;font-size:14px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:12px 0}.m,.kpi,.meter{background:var(--p2);padding:9px;border-radius:10px}.m b,.kpi b{display:block}.m span,.kpi span,.meter span{font-size:9px;color:var(--m)}.actions{display:flex;gap:7px;flex-wrap:wrap}.select{font-size:12px;color:var(--m);display:flex;gap:7px;margin:8px 0}
-.result{display:none}.result.show{display:block}.score{font-size:48px;font-weight:900;color:var(--g)}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.oppgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:15px}.opp-top{display:flex;justify-content:space-between}.opp h3{margin:0}.opp-score{font-size:28px;color:var(--g);font-weight:900}.badges{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}.meters{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}.ev,.idea{font-size:11px;padding:8px 0;border-bottom:1px solid rgba(39,54,87,.55)}.idea{background:#141e39;border:0;border-radius:9px;padding:9px;margin-top:6px}.error{color:#ff9cab;font-size:12px;margin-top:8px}.empty{text-align:center;color:var(--m);padding:20px}
-@media(max-width:900px){.grid,.oppgrid{grid-template-columns:1fr}.kpis,.meters{grid-template-columns:repeat(2,1fr)}}
-</style></head><body><div class="w">
-<div class="top"><div class="logo">Niche<i>Radar</i> <small>FASE 4</small></div><div id="status" class="status">API…</div></div>
-<h1>Opportunity Engine</h1><p class="sub">Convierte outliers de varios competidores en oportunidades concretas con evidencia, demanda, validación, frescura, espacio competitivo e ideas originales.</p>
+:root{--bg:#080c18;--p:#11182e;--p2:#17213d;--l:#273657;--t:#f5f7ff;--m:#98a5c6;--a:#7658ff;--g:#22d3a6;--w:#f3b45b;--r:#ff7080}
+*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui;background:radial-gradient(circle at 90% 0,rgba(118,88,255,.22),transparent 30%),var(--bg);color:var(--t)}
+.wrap{max-width:1320px;margin:auto;padding:28px}.top{display:flex;justify-content:space-between;gap:20px;align-items:center}.logo{font-size:25px;font-weight:900}.logo i{font-style:normal;color:var(--g)}.status,.pill{background:var(--p2);padding:6px 9px;border-radius:999px;font-size:11px}
+h1{font-size:38px;margin:30px 0 8px}.sub,.note{color:var(--m);line-height:1.55}.sub{font-size:16px;max-width:900px}.card{background:var(--p);border:1px solid var(--l);border-radius:16px;padding:18px;margin:16px 0}
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.field{background:#0c1327;color:white;border:1px solid var(--l);border-radius:11px;padding:12px 13px}button{border:0;border-radius:11px;padding:12px 16px;font-weight:800;background:var(--a);color:white;cursor:pointer}button.green{background:var(--g);color:#05241c}button:disabled{opacity:.55;cursor:not-allowed}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.kpi{background:var(--p2);padding:12px;border-radius:12px}.kpi b{font-size:22px}.kpi span{display:block;color:var(--m);font-size:10px;margin-top:4px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.channel,.niche{background:#0f162c;border:1px solid var(--l);border-radius:15px;padding:15px}.head{display:flex;gap:10px;align-items:center}.head img{width:46px;height:46px;border-radius:50%;object-fit:cover;background:#22304f}.head h3{margin:0;font-size:14px}.head small{color:var(--m)}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin:12px 0}.m{background:var(--p2);padding:9px;border-radius:10px}.m b{display:block}.m span{font-size:9px;color:var(--m)}.score{font-size:28px;font-weight:900;color:var(--g)}.badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}.evidence{font-size:11px;padding:8px 0;border-bottom:1px solid rgba(39,54,87,.55)}.empty{text-align:center;color:var(--m);padding:24px}.error{color:#ff9cab;margin-top:10px;font-size:12px}.hidden{display:none}
+.section-title{display:flex;justify-content:space-between;gap:10px;align-items:end;margin-bottom:12px}.section-title h2{margin:0}.section-title span{color:var(--m);font-size:11px}
+@media(max-width:950px){.grid{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,1fr)}.top{align-items:flex-start}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><div class="logo">Niche<i>Radar</i> <small style="font-size:11px;color:#98a5c6">MVP</small></div><div id="status" class="status">Comprobando API…</div></div>
+  <h1>Descubre canales que están despegando</h1>
+  <p class="sub">NicheRadar recorre categorías de YouTube, detecta canales con señales de crecimiento acelerado, analiza sus videos recientes y agrupa los patrones en nichos y micro-nichos emergentes.</p>
 
-<div class="card"><b>1. Importar competidores</b><div class="row" style="margin-top:10px"><input id="channelInput" placeholder="https://youtube.com/@canal"><button onclick="addChannel()">Importar</button></div><div id="error" class="error"></div></div>
+  <div class="card">
+    <div class="section-title"><div><h2>Radar global</h2><div class="note">No necesitas conocer un canal ni elegir un nicho previamente.</div></div></div>
+    <div class="toolbar">
+      <select id="region" class="field"><option value="US">Estados Unidos</option><option value="ES">España</option><option value="MX">México</option><option value="AR">Argentina</option><option value="BR">Brasil</option><option value="GB">Reino Unido</option></select>
+      <select id="categories" class="field"><option value="6">6 categorías</option><option value="8" selected>8 categorías</option><option value="12">12 categorías</option></select>
+      <select id="channelsLimit" class="field"><option value="10">10 canales</option><option value="20" selected>20 canales</option><option value="30">30 canales</option></select>
+      <button id="scanBtn" class="green" onclick="scanGlobal()">Escanear oportunidades</button>
+    </div>
+    <div id="error" class="error"></div>
+    <p class="note">El primer escaneo usa señales actuales como velocidad de views, outliers, views/sub, antigüedad y actividad. Los siguientes escaneos también pueden comparar snapshots y medir crecimiento observado entre fechas.</p>
+  </div>
 
-<div class="card"><b>2. Seleccionar y sincronizar</b><p class="note">Ideal: 3–10 canales del mismo subnicho.</p><div id="channels" class="grid"></div></div>
+  <div id="results" class="hidden">
+    <div class="kpis">
+      <div class="kpi"><b id="scanned">—</b><span>Canales analizados</span></div>
+      <div class="kpi"><b id="bestChannel">—</b><span>Mejor Channel Score</span></div>
+      <div class="kpi"><b id="nicheCount">—</b><span>Micro-nichos detectados</span></div>
+      <div class="kpi"><b id="bestNiche">—</b><span>Mejor Opportunity Score</span></div>
+    </div>
 
-<div class="card"><b>3. Crear radar</b><div class="row" style="margin-top:10px"><input id="nicheName" placeholder="Ej: IA para pequeños negocios"><button class="green" onclick="createRadar()">Analizar oportunidades</button></div><div id="nicheError" class="error"></div></div>
+    <div class="card">
+      <div class="section-title"><h2>Canales emergentes</h2><span>Ordenados por Channel Opportunity Score</span></div>
+      <div id="channels" class="grid"></div>
+    </div>
 
-<div id="analysis" class="card result"><div class="note">Niche Score</div><div id="nicheScore" class="score">—</div>
-<div class="kpis"><div class="kpi"><b id="opCount">—</b><span>Oportunidades</span></div><div class="kpi"><b id="topScore">—</b><span>Top Score</span></div><div class="kpi"><b id="topSpread">—</b><span>Canales validando</span></div><div class="kpi"><b id="topOutliers">—</b><span>Outliers top tema</span></div></div>
-<div id="opportunities" class="oppgrid"></div><p class="note">Score experimental: 35% demanda, 25% validación entre canales, 20% frescura y 20% espacio competitivo.</p></div>
+    <div class="card">
+      <div class="section-title"><h2>Nichos y micro-nichos detectados</h2><span>Construidos desde videos con señales anómalas</span></div>
+      <div id="niches" class="grid"></div>
+    </div>
+  </div>
 </div>
 <script>
 const fmt=n=>Intl.NumberFormat('es',{notation:'compact',maximumFractionDigits:1}).format(n||0);
-async function j(u,o={}){let r=await fetch(u,o),d=await r.json();if(!r.ok)throw Error(d.error||'Error');return d}
-async function status(){let s=await j('/api/status'),e=document.getElementById('status');e.textContent=s.youtube_api_configured?'● API conectada':'● Falta YOUTUBE_API_KEY';e.style.color=s.youtube_api_configured?'#22d3a6':'#f3b45b'}
-async function load(){let a=await j('/api/channels'),r=document.getElementById('channels');r.innerHTML=a.length?a.map(c=>`<div class="channel"><div class="head"><img src="${c.thumbnail||''}"><div><h3>${esc(c.title)}</h3><small>${esc(c.handle||c.youtube_id)}</small></div></div><div class="metrics"><div class="m"><b>${fmt(c.subscribers)}</b><span>Subs</span></div><div class="m"><b>${fmt(c.views)}</b><span>Views</span></div><div class="m"><b>${fmt(c.videos)}</b><span>Videos</span></div></div><label class="select"><input class="pick" type="checkbox" value="${c.youtube_id}"> Incluir</label><div class="actions"><button class="green" onclick="sync('${c.youtube_id}',this)">Sincronizar 50</button><button class="danger" onclick="del('${c.youtube_id}')">Eliminar</button></div></div>`).join(''):'<div class="empty">No hay canales.</div>'}
-async function addChannel(){let i=document.getElementById('channelInput'),e=document.getElementById('error');e.textContent='';try{await j('/api/channels',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url:i.value})});i.value='';load()}catch(x){e.textContent=x.message}}
-async function sync(id,b){let t=b.textContent;b.textContent='Sincronizando…';try{let r=await j('/api/channels/'+id+'/sync-videos',{method:'POST'});b.textContent='✓ '+r.synced}catch(e){b.textContent=t;alert(e.message)}}
-async function createRadar(){let ids=[...document.querySelectorAll('.pick:checked')].map(x=>x.value),name=document.getElementById('nicheName').value,e=document.getElementById('nicheError');e.textContent='';try{let n=await j('/api/niches',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,channel_ids:ids})});render(await j('/api/niches/'+n.id+'/opportunities'))}catch(x){e.textContent=x.message}}
-function render(a){let cs=a.cards||[],t=cs[0]||{};nicheScore.textContent=a.niche_score+'/100';opCount.textContent=cs.length;topScore.textContent=t.opportunity_score?t.opportunity_score+'/100':'—';topSpread.textContent=t.channel_spread||0;topOutliers.textContent=t.outlier_count||0;opportunities.innerHTML=cs.length?cs.map((c,i)=>`<div class="opp"><div class="opp-top"><div><div class="note">Oportunidad #${i+1}</div><h3>${esc(c.theme)}</h3></div><div class="opp-score">${c.opportunity_score}</div></div><div class="badges"><span class="pill">${c.channel_spread} canales</span><span class="pill">${c.outlier_count} outliers</span><span class="pill">${c.avg_outlier}x prom.</span><span class="pill">${fmt(c.avg_views_per_day)} views/día</span></div><div class="meters"><div class="meter"><b>${c.demand_score}</b><span>Demanda</span></div><div class="meter"><b>${c.validation_score}</b><span>Validación</span></div><div class="meter"><b>${c.freshness_score}</b><span>Frescura</span></div><div class="meter"><b>${c.whitespace_score}</b><span>Espacio</span></div></div><h4>Evidencia</h4>${c.evidence.map(e=>`<div class="ev"><b>${esc(e.title)}</b><br><span class="note">${esc(e.channel)} · ${e.outlier_score}x · ${fmt(e.views_per_day)} views/día</span></div>`).join('')}<h4>Ideas originales</h4>${c.ideas.map(x=>`<div class="idea">${esc(x)}</div>`).join('')}</div>`).join(''):'<div class="empty">No hay suficientes outliers 2x+.</div>';analysis.classList.add('show');analysis.scrollIntoView({behavior:'smooth'})}
-async function del(id){await j('/api/channels/'+id,{method:'DELETE'});load()}
+async function api(url,opts={}){const r=await fetch(url,opts);const d=await r.json();if(!r.ok)throw Error(d.error||'Error');return d}
+async function loadStatus(){const s=await api('/api/status'),e=document.getElementById('status');e.textContent=s.youtube_api_configured?'● YouTube API conectada':'● Falta YOUTUBE_API_KEY';e.style.color=s.youtube_api_configured?'#22d3a6':'#f3b45b'}
+async function scanGlobal(){const btn=document.getElementById('scanBtn'),err=document.getElementById('error');err.textContent='';btn.disabled=true;btn.textContent='Escaneando YouTube…';try{const data=await api('/api/discovery/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({region:region.value,category_limit:+categories.value,channels_limit:+channelsLimit.value})});render(data)}catch(e){err.textContent=e.message}finally{btn.disabled=false;btn.textContent='Escanear oportunidades'}}
+function render(data){const cs=data.channels||[],ns=data.niches||[],bc=cs[0]||{},bn=ns[0]||{};scanned.textContent=data.channels_scanned||0;bestChannel.textContent=bc.channel_score?bc.channel_score+'/100':'—';nicheCount.textContent=ns.length;bestNiche.textContent=bn.opportunity_score?bn.opportunity_score+'/100':'—';channels.innerHTML=cs.length?cs.map((c,i)=>`<div class="channel"><div class="head"><img src="${c.thumbnail||''}" alt=""><div><div class="note">#${i+1} · ${esc(c.category_hint||'Sin categoría')}</div><h3>${esc(c.title)}</h3><small>${esc(c.handle||c.youtube_id)}</small></div><div style="margin-left:auto" class="score">${c.channel_score}</div></div><div class="metrics"><div class="m"><b>${fmt(c.subscribers)}</b><span>Subs</span></div><div class="m"><b>${fmt(c.median_views_per_day)}</b><span>Mediana views/día</span></div><div class="m"><b>${c.outliers_2x}</b><span>Outliers 2x+</span></div></div><div class="badges"><span class="pill">${c.age_months} meses</span><span class="pill">${c.views_per_subscriber}x views/sub</span><span class="pill">${c.uploads_30d} uploads/30d</span>${c.observed_views_growth_per_day!==null?`<span class="pill">+${fmt(c.observed_views_growth_per_day)} views/día observado</span>`:''}</div></div>`).join(''):'<div class="empty">No se detectaron canales.</div>';
+niches.innerHTML=ns.length?ns.map((n,i)=>`<div class="niche"><div style="display:flex;justify-content:space-between;gap:10px"><div><div class="note">Oportunidad #${i+1}</div><h3 style="margin:3px 0">${esc(n.name)}</h3></div><div class="score">${n.opportunity_score}</div></div><div class="badges"><span class="pill">${n.channel_count} canales</span><span class="pill">${n.signal_video_count} videos señal</span><span class="pill">${n.avg_outlier}x outlier promedio</span><span class="pill">${fmt(n.avg_views_per_day)} views/día</span></div><h4 style="margin-bottom:5px">Evidencia</h4>${n.evidence.slice(0,3).map(e=>`<div class="evidence"><b>${esc(e.title)}</b><br><span class="note">${esc(e.channel)} · ${e.outlier_score}x · ${fmt(e.views_per_day)} views/día</span></div>`).join('')}</div>`).join(''):'<div class="empty">Todavía no hay suficientes señales para formar micro-nichos.</div>';results.classList.remove('hidden');results.scrollIntoView({behavior:'smooth'})}
 function esc(s=''){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-status().catch(()=>{});load().catch(()=>{});
-</script></body></html>
+loadStatus().catch(()=>{});
+</script>
+</body>
+</html>
