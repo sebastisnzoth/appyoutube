@@ -1,0 +1,2 @@
+[tool.vercel]
+entrypoint = "oauth_app:app"
