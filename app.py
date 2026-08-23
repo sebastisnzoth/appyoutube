@@ -196,7 +196,7 @@ def save_channel(channel):
     """, (
         channel["youtube_id"], channel["handle"], channel["title"], channel["thumbnail"],
         channel["subscribers"], channel["views"], channel["videos"], channel["uploads_playlist_id"],
-        channel["published_at"], channel["category_hint"], datetime.utcnow().isoformat()
+        channel["published_at"], channel["category_hint"], datetime.now(timezone.utc).isoformat()
     ))
     conn.commit()
     conn.close()
@@ -213,7 +213,7 @@ def snapshot_channel(channel):
         INSERT INTO channel_snapshots(channel_id, captured_at, subscribers, views, videos)
         VALUES (?, ?, ?, ?, ?)
     """, (
-        channel["youtube_id"], datetime.utcnow().isoformat(), channel["subscribers"], channel["views"], channel["videos"]
+        channel["youtube_id"], datetime.now(timezone.utc).isoformat(), channel["subscribers"], channel["views"], channel["videos"]
     ))
     conn.commit()
     conn.close()
@@ -237,7 +237,7 @@ def begin_radar_run(region, category_limit, channels_limit, discovery_mode):
     cur = conn.execute("""
         INSERT INTO radar_runs(started_at, region, category_limit, channels_limit, discovery_mode, status)
         VALUES (?, ?, ?, ?, ?, 'running')
-    """, (datetime.utcnow().isoformat(), region, category_limit, channels_limit, discovery_mode))
+    """, (datetime.now(timezone.utc).isoformat(), region, category_limit, channels_limit, discovery_mode))
     run_id = cur.lastrowid
     conn.commit()
     conn.close()
@@ -250,7 +250,7 @@ def finish_radar_run(run_id, scored, niches, status="completed"):
         UPDATE radar_runs
         SET finished_at=?, channels_scanned=?, niches_found=?, status=?
         WHERE id=?
-    """, (datetime.utcnow().isoformat(), len(scored), len(niches), status, run_id))
+    """, (datetime.now(timezone.utc).isoformat(), len(scored), len(niches), status, run_id))
     for position, channel in enumerate(scored, start=1):
         comp = channel["components"]
         conn.execute("""
@@ -261,7 +261,7 @@ def finish_radar_run(run_id, scored, niches, status="completed"):
         """, (
             run_id, channel["youtube_id"], position, channel["channel_score"], comp["momentum"],
             comp["outliers"], comp["audience_efficiency"], comp["freshness"], comp["consistency"],
-            channel["observed_views_growth_per_day"], datetime.utcnow().isoformat()
+            channel["observed_views_growth_per_day"], datetime.now(timezone.utc).isoformat()
         ))
     conn.commit()
     conn.close()
@@ -269,7 +269,7 @@ def finish_radar_run(run_id, scored, niches, status="completed"):
 
 def fail_radar_run(run_id):
     conn = db()
-    conn.execute("UPDATE radar_runs SET finished_at=?, status='failed' WHERE id=?", (datetime.utcnow().isoformat(), run_id))
+    conn.execute("UPDATE radar_runs SET finished_at=?, status='failed' WHERE id=?", (datetime.now(timezone.utc).isoformat(), run_id))
     conn.commit()
     conn.close()
 
@@ -286,7 +286,8 @@ def iso_dt(value):
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except ValueError:
         return None
 
@@ -307,7 +308,7 @@ def save_video_details(channel_id, ids):
         return 0
     count = 0
     conn = db()
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
     for batch in batched(ids, 50):
         data = yt("videos", {"part": "snippet,statistics,contentDetails", "id": ",".join(batch)})
         for item in data.get("items", []):
@@ -602,7 +603,6 @@ def discover_candidates(region="US", category_limit=8, channels_limit=20, discov
         candidate_channels = []
         for item in items:
             channel = normalize_channel(item, channel_hints.get(item["id"], ""))
-            # Favor emerging channels without excluding larger channels that validate a niche.
             candidate_channels.append(channel)
         candidate_channels.sort(key=lambda c: (c["subscribers"] > 500000, c["subscribers"]))
         candidate_channels = candidate_channels[:channels_limit]
@@ -666,9 +666,7 @@ def run_discovery():
 def discovery_history():
     limit = max(1, min(int(request.args.get("limit", 20)), 100))
     conn = db()
-    rows = [dict(r) for r in conn.execute("""
-        SELECT * FROM radar_runs ORDER BY started_at DESC LIMIT ?
-    """, (limit,))]
+    rows = [dict(r) for r in conn.execute("SELECT * FROM radar_runs ORDER BY started_at DESC LIMIT ?", (limit,))]
     conn.close()
     return jsonify(rows)
 
@@ -724,7 +722,6 @@ def add_channel():
         return jsonify({"error": str(exc)}), 500
 
 
-# Initialize schema under both `python app.py` and WSGI/Gunicorn imports.
 init_db()
 
 if __name__ == "__main__":
