@@ -66,8 +66,8 @@ No inventes estadísticas ni hechos que no estén en el material base."""
 
 _SHORT_UI = r'''
 <div id="shortCard" class="card">
-  <h2>Generar YouTube Short</h2>
-  <p class="note">Convierte el contenido del formulario o el paquete de IA en un Short vertical 9:16 de 25–45 segundos.</p>
+  <h2>Generar y publicar YouTube Short</h2>
+  <p class="note">Convierte el contenido del formulario o el paquete de IA en un Short vertical 9:16 de 25–45 segundos y súbelo directamente al canal conectado.</p>
   <div class="toolbar">
     <button type="button" id="generateShortBtn" class="secondary">Generar Short con IA</button>
     <span id="shortStatus" class="note"></span>
@@ -89,9 +89,93 @@ _SHORT_SCRIPT = r'''
     const ta=document.querySelector('#aiExtras textarea');
     return ta ? ta.value : '';
   }
-  function getPack(){
-    return window.__aiPack || {};
+  function getPack(){ return window.__aiPack || {}; }
+
+  async function shortSendChunk(token, blob, start, end, total, attempt=1){
+    try{
+      return await api('/api/publish/youtube/upload-chunk',{
+        method:'POST',
+        headers:{
+          'Content-Type':'application/octet-stream',
+          'X-Upload-Token':token,
+          'X-Chunk-Start':String(start),
+          'X-Chunk-End':String(end),
+          'X-Upload-Total':String(total)
+        },
+        body:blob
+      });
+    }catch(err){
+      if(attempt<3){
+        await new Promise(r=>setTimeout(r,800*attempt));
+        return shortSendChunk(token,blob,start,end,total,attempt+1);
+      }
+      throw err;
+    }
   }
+
+  async function uploadShortInChunks(startInfo,file,progressEl,publishBtn){
+    const chunkSize=startInfo.chunk_size||3145728;
+    let offset=0, videoId='';
+    while(offset<file.size){
+      const endExclusive=Math.min(offset+chunkSize,file.size);
+      const end=endExclusive-1;
+      const result=await shortSendChunk(startInfo.upload_token,file.slice(offset,endExclusive),offset,end,file.size);
+      offset=endExclusive;
+      const pct=Math.max(1,Math.min(100,Math.round((offset/file.size)*100)));
+      publishBtn.textContent=`Subiendo Short ${pct}%`;
+      progressEl.innerHTML=`<div class="notice">Subiendo ${(file.size/1024/1024).toFixed(1)} MB por bloques seguros · ${pct}%</div>`;
+      if(result.done){ videoId=result.video_id||''; break; }
+    }
+    if(!videoId) throw new Error('La transferencia terminó sin recibir el ID del Short.');
+    return videoId;
+  }
+
+  async function publishGeneratedShort(r){
+    const fileInput=document.getElementById('shortVideoFile');
+    const privacyEl=document.getElementById('shortPrivacy');
+    const publishBtn=document.getElementById('publishShortBtn');
+    const progressEl=document.getElementById('shortPublishResult');
+    const video=fileInput?.files?.[0];
+    if(!video){ progressEl.innerHTML='<div class="notice err">Seleccioná el archivo vertical del Short.</div>'; return; }
+
+    const title=(r.short_title||'').trim();
+    const hashtags=(r.hashtags||[]).join(' ');
+    const description=((r.description||'')+'\n\n'+hashtags).trim();
+    const tags=(r.hashtags||[]).map(x=>String(x).replace(/^#/,''));
+    if(!tags.some(x=>x.toLowerCase()==='shorts')) tags.push('Shorts');
+
+    publishBtn.disabled=true;
+    publishBtn.textContent='Preparando Short…';
+    try{
+      const start=await api('/api/publish/youtube/start-resumable',{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+          title,
+          description,
+          privacy_status:privacyEl?.value||'private',
+          tags:tags.slice(0,30),
+          category_id:form.elements.category_id?.value||'22',
+          channel_id:document.getElementById('publishChannelId')?.value||'',
+          content_type:video.type||'video/mp4',
+          file_size:video.size
+        })
+      });
+      const videoId=await uploadShortInChunks(start,video,progressEl,publishBtn);
+      publishBtn.textContent='Finalizando Short…';
+      const complete=await api('/api/publish/youtube/complete-resumable',{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+          video_id:videoId,channel_id:start.channel_id,title,privacy_status:start.privacy_status
+        })
+      });
+      progressEl.innerHTML=`<div class="notice ok">Short subido correctamente. ID: ${esc(videoId)} · <a href="${esc(complete.youtube_url)}" target="_blank" style="color:#22d3a6">Abrir en YouTube</a></div>`;
+      fileInput.value='';
+    }catch(e){
+      progressEl.innerHTML=`<div class="notice err">${esc(e.message)}</div>`;
+    }finally{
+      publishBtn.disabled=false;
+      publishBtn.textContent='Subir Short a YouTube';
+    }
+  }
+
   btn.addEventListener('click',async()=>{
     btn.disabled=true; btn.textContent='Generando Short…';
     status.textContent='';
@@ -120,15 +204,28 @@ _SHORT_SCRIPT = r'''
         <div class="note">Plan de tomas</div>${shots}
         <div class="note" style="margin-top:12px">Descripción</div><textarea id="shortDescriptionText" style="width:100%;min-height:100px">${esc(r.description||'')}\n\n${esc(hashtags)}</textarea>
         <div class="note">CTA</div><p>${esc(r.cta||'')}</p>
-        <button type="button" id="useShortPublish" class="secondary">Usar datos del Short para publicar</button>
+
+        <div class="card" style="background:#11182e;margin-top:16px">
+          <h3>Publicar este Short</h3>
+          <p class="note">Seleccioná el video final vertical 9:16. Se subirá al mismo canal conectado.</p>
+          <div class="publish-grid">
+            <div><label>Video Short</label><input id="shortVideoFile" type="file" accept="video/*"></div>
+            <div><label>Privacidad</label><select id="shortPrivacy"><option value="private" selected>Privado</option><option value="unlisted">No listado</option><option value="public">Público</option></select></div>
+            <div class="wide"><button type="button" id="publishShortBtn">Subir Short a YouTube</button></div>
+          </div>
+          <div id="shortPublishResult"></div>
+        </div>
+
+        <button type="button" id="useShortPublish" class="secondary">Copiar datos al formulario general</button>
       </div>`;
+      document.getElementById('publishShortBtn').onclick=()=>publishGeneratedShort(r);
       document.getElementById('useShortPublish').onclick=()=>{
         form.elements.title.value=r.short_title||'';
         form.elements.description.value=(r.description||'')+'\n\n'+(r.hashtags||[]).join(' ');
         const base=(form.elements.tags.value||'').split(',').map(x=>x.trim()).filter(Boolean);
         const h=(r.hashtags||[]).map(x=>String(x).replace(/^#/,''));
         form.elements.tags.value=[...new Set([...base,...h,'Shorts'])].slice(0,30).join(', ');
-        if(status) status.textContent='Datos del Short cargados. Ahora seleccioná un video vertical 9:16 y publicalo.';
+        if(status) status.textContent='Datos del Short copiados al formulario general.';
         form.scrollIntoView({behavior:'smooth'});
         form.dispatchEvent(new Event('input',{bubbles:true}));
       };
