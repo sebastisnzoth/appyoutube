@@ -2,6 +2,7 @@ import json
 import os
 import re
 import sqlite3
+from pathlib import Path
 
 import requests
 from flask import jsonify, request
@@ -194,3 +195,81 @@ No inventes estadísticas. Usa la evidencia solo como señal de demanda. Evita c
         return jsonify({"error": f"No se pudo contactar Gemini: {exc}"}), 502
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         return jsonify({"error": f"Respuesta inválida de Gemini: {exc}"}), 502
+
+
+_AI_CARD = r'''
+<div id="aiPackCard" class="card hidden">
+  <h2>Paquete de contenido con IA</h2>
+  <p class="note">Gemini convierte una oportunidad del radar en título, descripción, tags, gancho y concepto de miniatura.</p>
+  <div id="aiPackResult"></div>
+</div>
+'''
+
+_AI_SCRIPT = r'''
+<script>
+window.__radarData = null;
+const __baseRender = window.render;
+window.render = function(d){
+  window.__radarData = d;
+  __baseRender(d);
+  setTimeout(()=>{
+    document.querySelectorAll('#niches .niche').forEach((el,i)=>{
+      if(el.querySelector('.ai-generate-btn')) return;
+      const b=document.createElement('button');
+      b.className='secondary ai-generate-btn';
+      b.style.marginTop='12px';
+      b.textContent='Generar contenido con IA';
+      b.onclick=()=>window.generateContentPack(i);
+      el.appendChild(b);
+    });
+  },0);
+};
+window.generateContentPack = async function(i){
+  const niche=(window.__radarData?.niches||[])[i];
+  if(!niche) return;
+  aiPackCard.classList.remove('hidden');
+  aiPackResult.innerHTML='<div class="notice">Generando con Gemini…</div>';
+  aiPackCard.scrollIntoView({behavior:'smooth',block:'start'});
+  try{
+    const d=await api('/api/ai/content-pack',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({niche:niche.name,evidence:niche.evidence||[],language:'es'})
+    });
+    aiPackResult.innerHTML=`
+      <div class="notice ok"><b>Paquete generado</b></div>
+      <div class="card" style="margin:10px 0;background:#0f162c">
+        <div class="note">Título</div><h3>${esc(d.title)}</h3>
+        <div class="note">Gancho</div><p>${esc(d.hook)}</p>
+        <div class="note">Ángulo</div><p>${esc(d.angle)}</p>
+        <div class="note">Miniatura</div><p>${esc(d.thumbnail_concept)}</p>
+        <div class="note">Tags</div><p>${esc((d.tags||[]).join(', '))}</p>
+        <button id="applyAiPack" class="secondary">Usar en Publicar en YouTube</button>
+      </div>`;
+    const apply=document.getElementById('applyAiPack');
+    apply.onclick=()=>{
+      if(typeof publishForm==='undefined') return;
+      publishForm.elements.title.value=d.title||'';
+      publishForm.elements.description.value=d.description||'';
+      publishForm.elements.tags.value=(d.tags||[]).join(', ');
+      publishCard.classList.remove('hidden');
+      publishCard.scrollIntoView({behavior:'smooth',block:'start'});
+    };
+  }catch(e){
+    aiPackResult.innerHTML=`<div class="notice err">${esc(e.message)}</div>`;
+  }
+};
+</script>
+'''
+
+
+def _home_with_ai():
+    html = (Path(__file__).parent / "static" / "index.html").read_text(encoding="utf-8")
+    marker = '<div class="card"><h2>Radar global</h2>'
+    if marker in html:
+        html = html.replace(marker, _AI_CARD + marker, 1)
+    html = html.replace("</body>", _AI_SCRIPT + "</body>", 1)
+    return html
+
+
+app.view_functions["home"] = _home_with_ai
