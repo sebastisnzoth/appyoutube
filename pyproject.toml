@@ -14,4 +14,4 @@ dependencies = [
 ]
 
 [tool.vercel]
-entrypoint = "short_patch:app"
+entrypoint = "script_export_patch:app"
