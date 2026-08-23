@@ -4,11 +4,12 @@ NicheRadar descubre automáticamente canales con señales de aceleración y, a p
 
 ## Estado actual
 
-Esta rama implementa los primeros tres pasos del roadmap técnico:
+Esta versión implementa los primeros cuatro pasos del roadmap técnico:
 
 1. motor de descubrimiento más amplio que `mostPopular`;
 2. `Growth Opportunity Score v2`;
-3. historial persistente de ejecuciones del radar.
+3. historial persistente de ejecuciones del radar;
+4. `Opportunity Timeline` con ventanas 24h / 7d / 30d.
 
 ## 1. Motor de descubrimiento
 
@@ -25,8 +26,6 @@ Hay tres modos:
 - `balanced`: popular + búsqueda reciente, recomendado;
 - `deep`: reservado para ampliar búsqueda en iteraciones posteriores.
 
-> `search.list` consume bastante más cuota de YouTube API que `videos.list`, por eso el modo light sigue disponible.
-
 ## 2. Growth Opportunity Score v2
 
 El score es de 0 a 100 y separa cinco componentes visibles:
@@ -34,22 +33,18 @@ El score es de 0 a 100 y separa cinco componentes visibles:
 - **30% Momentum**: velocidad reciente y, cuando existe histórico, crecimiento observado entre snapshots;
 - **25% Outliers**: densidad y fuerza de videos 2x+;
 - **20% Audience Efficiency**: views recientes en relación con suscriptores;
-- **15% Freshness**: recencia de las señales fuertes + antigüedad del canal;
+- **15% Freshness**: recencia de señales fuertes + antigüedad del canal;
 - **10% Consistency**: repetición de señales en varios videos y actividad reciente.
-
-El primer escaneo usa proxies actuales. Desde el segundo escaneo del mismo canal, Momentum puede incorporar crecimiento observado real entre snapshots.
 
 ## 3. Historial del radar
 
-Cada ejecución crea un registro en:
+Cada ejecución guarda datos en:
 
 - `radar_runs`;
 - `radar_run_channels`;
 - `channel_snapshots`.
 
-Esto prepara la base de datos para el siguiente paso: **Opportunity Timeline 24h / 7d / 30d**.
-
-Endpoints nuevos:
+Endpoints:
 
 ```text
 GET /api/discovery/history
@@ -57,26 +52,75 @@ GET /api/discovery/history/<run_id>
 GET /api/channels/<channel_id>/history
 ```
 
-El endpoint principal sigue siendo:
+## 4. Opportunity Timeline
+
+Cada canal puede mostrar crecimiento observado en tres ventanas:
+
+- **24h**
+- **7d**
+- **30d**
+
+Para cada ventana se calcula, cuando existe cobertura histórica suficiente:
+
+- delta de views;
+- delta de suscriptores;
+- views por día;
+- suscriptores por día;
+- crecimiento porcentual.
+
+El backend busca un snapshot anterior a cada ventana y lo compara con el snapshot actual. Si todavía no existe un snapshot suficientemente antiguo, devuelve `available: false` en vez de inventar una cifra.
+
+Endpoint nuevo:
+
+```text
+GET /api/channels/<channel_id>/timeline
+```
+
+La respuesta también incluye una clasificación de tendencia:
+
+- `Recolectando datos`
+- `Emergente`
+- `Acelerando`
+- `Fuerte`
+- `Desacelerando`
+- `Observando`
+
+La clasificación usa las velocidades observadas en 24h, 7d y 30d, junto con el Growth Opportunity Score cuando corresponde.
+
+Ejemplo conceptual:
+
+```json
+{
+  "windows": {
+    "24h": {"available": true, "views_delta": 12000, "views_per_day": 11850},
+    "7d": {"available": true, "views_delta": 52000, "views_per_day": 7600},
+    "30d": {"available": false}
+  },
+  "trend": {
+    "status": "Acelerando",
+    "direction": "up"
+  }
+}
+```
+
+## Radar principal
 
 ```text
 POST /api/discovery/run
 ```
 
-Ejemplo de body:
+Ejemplo:
 
 ```json
 {
   "region": "US",
-  "category_limit": 6,
+  "category_limit": 8,
   "channels_limit": 20,
   "discovery_mode": "balanced"
 }
 ```
 
-## Micro-nichos
-
-Los videos señal se siguen agrupando con tokenización + similitud Jaccard. El clustering es intencionalmente simple y auditable para el MVP. Después puede reemplazarse por embeddings semánticos.
+Cada canal devuelto por el radar incluye ahora `timeline`, además del Growth Opportunity Score v2.
 
 ## Ejecutar
 
@@ -98,11 +142,10 @@ Nunca subas la API key real al repositorio.
 
 ## Roadmap técnico siguiente
 
-4. Opportunity Timeline con ventanas 24h / 7d / 30d.
 5. Confidence Score por canal y oportunidad.
 6. Google OAuth + My Channel + publicación a YouTube.
 7. Financial Dashboard con YouTube Analytics para canales autorizados.
 
 ## Importante
 
-Los scores de NicheRadar son heurísticas experimentales del producto. Las métricas públicas de canales externos provienen de YouTube Data API; crecimiento, oportunidad y monetización potencial deben mostrarse como cálculos/estimaciones cuando no provienen directamente de datos privados autorizados del propietario del canal.
+Los scores y estados de tendencia de NicheRadar son heurísticas experimentales del producto. Las métricas públicas de canales externos provienen de YouTube Data API. La primera ejecución no puede producir una ventana histórica de 24h, 7d o 30d si esos snapshots todavía no existen; la aplicación lo indica explícitamente.
