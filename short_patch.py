@@ -77,7 +77,7 @@ _SHORT_UI = r'''
 '''
 
 _SHORT_SCRIPT = r'''
-<script>
+<script data-nicheradar-shorts="1">
 (function(){
   const btn=document.getElementById('generateShortBtn');
   const out=document.getElementById('shortResult');
@@ -244,7 +244,7 @@ def home_with_shorts():
     marker = '<div class="card"><h2>Radar global</h2>'
     if marker in html and 'id="shortCard"' not in html:
         html = html.replace(marker, _SHORT_UI + marker, 1)
-    if '</body>' in html and 'id="generateShortBtn"' not in html:
+    if '</body>' in html and 'data-nicheradar-shorts="1"' not in html:
         html = html.replace('</body>', _SHORT_SCRIPT + '</body>', 1)
     return html
 
